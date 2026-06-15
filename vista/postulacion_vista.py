@@ -11,6 +11,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QBrush
 
 from modelo.entidades import EstadoPostulacion, EstadoTerna
+from modelo import permisos
+from modelo.rol_usuario import RolUsuario
+from modelo.sesion import Sesion
 from .widgets import (
     SeccionBase, DialogoBase, Tabla,
     BTN_PRIMARY, BTN_SUCCESS, BTN_WARNING, BTN_DANGER, BTN_SECONDARY,
@@ -75,7 +78,7 @@ class PostulacionVista(SeccionBase):
         self.ctrlE = ctrl_est
         self.ctrlO = ctrl_oferta
         self.ctrlC = ctrl_coord
-        super().__init__("📝  Postulaciones", parent)
+        super().__init__("📝  Postulaciones", parent, seccion_idx=permisos.POSTULACIONES)
 
     def _headers(self):
         return ["ID", "Estudiante", "Oferta", "Fecha", "Estado", "Coordinador"]
@@ -105,6 +108,8 @@ class PostulacionVista(SeccionBase):
         self.btn_eliminar.setText("✕  Eliminar")
 
     def _sync_botones(self):
+        # Agregar se gatea por capacidad CREAR_POSTULACION (independiente de selección).
+        self.btn_agregar.setEnabled(self._puede(permisos.CREAR_POSTULACION))
         id_ = self._tabla.id_sel()
         if not id_:
             for b in [self.btn_validar, self.btn_rechazar,
@@ -115,10 +120,16 @@ class PostulacionVista(SeccionBase):
         post = self.ctrl.obtener(id_)
         if not post: return
         s = post.estado
-        self.btn_validar.setEnabled(s == EstadoPostulacion.PENDIENTE)
-        self.btn_rechazar.setEnabled(s in [EstadoPostulacion.PENDIENTE, EstadoPostulacion.VALIDADA])
-        self.btn_terna.setEnabled(s == EstadoPostulacion.VALIDADA)
-        self.btn_aceptar.setEnabled(s == EstadoPostulacion.EN_TERNA)
+        # Cada acción combina la habilitación por estado/selección con la capacidad del rol.
+        self.btn_validar.setEnabled(
+            s == EstadoPostulacion.PENDIENTE and self._puede(permisos.VALIDAR_POSTULACION))
+        self.btn_rechazar.setEnabled(
+            s in [EstadoPostulacion.PENDIENTE, EstadoPostulacion.VALIDADA]
+            and self._puede(permisos.RECHAZAR_POSTULACION))
+        self.btn_terna.setEnabled(
+            s == EstadoPostulacion.VALIDADA and self._puede(permisos.ATERNA_POSTULACION))
+        self.btn_aceptar.setEnabled(
+            s == EstadoPostulacion.EN_TERNA and self._puede(permisos.ACEPTAR_POSTULACION))
         self.btn_editar.setEnabled(s == EstadoPostulacion.PENDIENTE)
         self.btn_eliminar.setEnabled(True)
 
@@ -160,6 +171,7 @@ class PostulacionVista(SeccionBase):
     def actualizar(self):
         super().actualizar()
         self._after_llenar()
+        self._sync_botones()
 
     def _on_agregar(self):
         ests   = [e for e in self.ctrlE.listar() if e.puede_practicas_externas()]
@@ -184,18 +196,10 @@ class PostulacionVista(SeccionBase):
             self.ctrlC.listar(), postulacion=p, parent=self
         )
         if dlg.exec() == DialogoBase.DialogCode.Accepted:
-            # Reemplazar: eliminar y crear de nuevo sólo si pendiente
             est_id, of_id, coord_id = dlg.datos()
-            from modelo.repositorio import Repositorio
-            repo = Repositorio()
-            post = repo.obtener_postulacion(id_)
-            if post:
-                post.id_estudiante = est_id
-                post.id_oferta     = of_id
-                post.id_coordinador= coord_id
-                repo.actualizar_postulacion(post)
-                msg_ok(self, "Postulación actualizada.")
-                self.actualizar()
+            ok, msg = self.ctrl.actualizar(id_, est_id, of_id, coord_id)
+            (msg_ok if ok else msg_error)(self, msg)
+            if ok: self.actualizar()
 
     def _on_eliminar(self, id_):
         if confirmar_eliminacion(self, "esta postulación"):
@@ -206,11 +210,17 @@ class PostulacionVista(SeccionBase):
     def _validar_sel(self):
         id_ = self._tabla.id_sel()
         if not id_: return
+        # El Coordinador se estampa a sí mismo como validador (sin diálogo de selección).
+        if self._es(RolUsuario.COORDINADOR):
+            ok, msg = self.ctrl.validar(id_, Sesion().ref_id)
+            (msg_ok if ok else msg_error)(self, msg)
+            if ok: self.actualizar()
+            return
         coords = self.ctrlC.listar()
         if not coords:
             msg_warn(self, "Registre primero un coordinador.")
             return
-        # Usar el primer coordinador o pedir selección
+        # Admin (y otros validadores): pedir selección del coordinador validador.
         dlg = _DialogoSelCoord(coords, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             ok, msg = self.ctrl.validar(id_, dlg.id_sel)
@@ -249,7 +259,7 @@ class _DialogoSelCoord(QDialog):
         self.id_sel = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 12)
-        lay.addWidget(QLabel("<b>Seleccione el Coordinador validador:</b>"))
+        lay.addWidget(QLabel("Seleccione el Coordinador validador:"))
         self.lista = QListWidget()
         for c in coordinadores:
             item = QListWidgetItem(f"{c.nombre_completo}  [{c.cedula}]")
@@ -281,7 +291,7 @@ class TernaVista(SeccionBase):
         self.ctrlP = ctrl_post
         self.ctrlE = ctrl_est
         self.ctrlO = ctrl_oferta
-        super().__init__("👥  Ternas", parent)
+        super().__init__("👥  Ternas", parent, seccion_idx=permisos.TERNAS)
 
     def _headers(self):
         return ["ID Terna", "Oferta", "# Postulaciones", "Completa", "Estado"]
@@ -304,9 +314,14 @@ class TernaVista(SeccionBase):
     def _sync_botones(self):
         id_ = self._tabla.id_sel()
         tiene = id_ is not None
+        # Detalle/Ver es lectura: disponible para cualquier rol con una fila seleccionada
+        # (Empresa puede ver el detalle de sus ternas, pero no mutarlas).
         self.btn_detalle.setEnabled(tiene)
-        self.btn_eliminar.setEnabled(tiene)
-        if tiene:
+        # Acciones MUTADORAS (Eliminar, Enviar a Empresa) se gatean por capacidad
+        # ENVIAR_TERNA: Empresa no la tiene, así que solo ve el detalle.
+        puede_mutar = self._puede(permisos.ENVIAR_TERNA)
+        self.btn_eliminar.setEnabled(tiene and puede_mutar)
+        if tiene and puede_mutar:
             t = self.ctrl.obtener(id_)
             self.btn_enviar.setEnabled(
                 t is not None and t.estado == EstadoTerna.ACTIVA and bool(t.id_postulaciones)
@@ -315,8 +330,12 @@ class TernaVista(SeccionBase):
             self.btn_enviar.setEnabled(False)
 
     def _cargar_filas(self):
+        # Scope por fila: Empresa ve solo ternas cuyas ofertas son suyas (predicado en
+        # permisos). Tutor/Coordinador NO se scopean por fila: ven todas las ternas para
+        # poder procesarlas, porque el modelo no tiene 'dueño' por postulación/terna; su
+        # restricción es por CAPACIDAD (qué acciones pueden ejecutar), no por visibilidad.
         filas = []
-        for t in self.ctrl.listar():
+        for t in self._filtrar(self.ctrl.listar()):
             oferta = self.ctrlO.obtener(t.id_oferta)
             completa = "✔" if t.esta_completa() else "✗"
             filas.append([
@@ -329,27 +348,20 @@ class TernaVista(SeccionBase):
             ])
         return filas
 
+    def actualizar(self):
+        super().actualizar()
+        # _sync_botones es la autoridad final: aplica el gateo por capacidad sobre el
+        # estado de botones que dejó el _actualizar_botones base (que solo mira selección).
+        self._sync_botones()
+
     def _on_agregar(self): pass
     def _on_editar(self, id_): pass
 
     def _on_eliminar(self, id_):
         if confirmar_eliminacion(self, "esta terna"):
-            from modelo.repositorio import Repositorio
-            repo = Repositorio()
-            t = repo.obtener_terna(id_)
-            if t:
-                # Revertir estados de postulaciones
-                for id_p in t.id_postulaciones:
-                    p = repo.obtener_postulacion(id_p)
-                    if p:
-                        p.estado = EstadoPostulacion.VALIDADA
-                        repo.actualizar_postulacion(p)
-            self.ctrl.obtener(id_)
-            from modelo.repositorio import Repositorio
-            Repositorio().eliminar_terna(id_)
-            Repositorio().guardar()
-            msg_ok(self, "Terna eliminada.")
-            self.actualizar()
+            ok, msg = self.ctrl.eliminar(id_)
+            (msg_ok if ok else msg_error)(self, msg)
+            if ok: self.actualizar()
 
     def _enviar_sel(self):
         id_ = self._tabla.id_sel()
@@ -362,15 +374,16 @@ class TernaVista(SeccionBase):
         id_ = self._tabla.id_sel()
         if not id_: return
         t = self.ctrl.obtener(id_)
-        dlg = _DialogoDetalleTerna(t, self.ctrlP, self.ctrlE, self.ctrlO, parent=self)
+        dlg = _DialogoDetalleTerna(t, self.ctrl, self.ctrlP, self.ctrlE, self.ctrlO, parent=self)
         dlg.exec()
         self.actualizar()
 
 
 class _DialogoDetalleTerna(QDialog):
-    def __init__(self, terna, ctrl_post, ctrl_est, ctrl_oferta, parent=None):
+    def __init__(self, terna, ctrl_terna, ctrl_post, ctrl_est, ctrl_oferta, parent=None):
         super().__init__(parent)
         self.terna = terna
+        self.ctrl_terna = ctrl_terna
         self.ctrl_post = ctrl_post
         self.ctrl_est  = ctrl_est
         self.ctrl_of   = ctrl_oferta
@@ -384,9 +397,9 @@ class _DialogoDetalleTerna(QDialog):
 
         of = self.ctrl_of.obtener(terna.id_oferta)
         lay.addWidget(QLabel(
-            f"<b>Oferta:</b> {of.descripcion if of else terna.id_oferta}<br>"
-            f"<b>Estado terna:</b> {terna.estado}&nbsp;&nbsp;"
-            f"<b>Lugares disponibles:</b> {terna.MAX - len(terna.id_postulaciones)}"
+            f"Oferta: {of.descripcion if of else terna.id_oferta}<br>"
+            f"Estado terna: {terna.estado}&nbsp;&nbsp;"
+            f"Lugares disponibles: {terna.MAX - len(terna.id_postulaciones)}"
         ))
 
         sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
@@ -430,13 +443,8 @@ class _DialogoDetalleTerna(QDialog):
     def _quitar(self):
         id_p = self.tabla.id_sel()
         if not id_p: return
-        from modelo.repositorio import Repositorio
-        repo = Repositorio()
-        self.terna.remover(id_p)
-        repo.actualizar_terna(self.terna)
-        p = repo.obtener_postulacion(id_p)
-        if p:
-            p.estado = EstadoPostulacion.VALIDADA
-            repo.actualizar_postulacion(p)
-        msg_ok(self, "Postulación removida de la terna.")
-        self._cargar()
+        ok, msg = self.ctrl_terna.remover_postulacion(self.terna.id_terna, id_p)
+        (msg_ok if ok else msg_error)(self, msg)
+        if ok:
+            self.terna = self.ctrl_terna.obtener(self.terna.id_terna) or self.terna
+            self._cargar()

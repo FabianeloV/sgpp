@@ -14,6 +14,7 @@ from .entidades import (
     OfertaPractica,
     Postulacion,
     Practica,
+    RolUsuario,
     SolicitudAutorizacion,
     Terna,
     TipoFormulario,
@@ -21,6 +22,7 @@ from .entidades import (
     Tutor,
     TutorAcademico,
     TutorEmpresarial,
+    Usuario,
     gen_id,
 )
 
@@ -48,4 +50,6 @@ __all__ = [
     "Formulario",
     "Documento",
     "SolicitudAutorizacion",
+    "RolUsuario",
+    "Usuario",
 ]

@@ -14,14 +14,16 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QColor, QBrush
 
+from modelo.sesion import Sesion
+from modelo.rol_usuario import RolUsuario
+from modelo.repositorio import Repositorio
+from modelo import permisos
+
 # ── Paleta de colores ─────────────────────────────────────────────────────────
 PRIMARY   = "#1B4F8A"
 PRIMARY_L = "#2562AA"
 PRIMARY_D = "#0D3166"
 ACCENT    = "#1976D2"
-DANGER    = "#C62828"
-SUCCESS   = "#2E7D32"
-WARNING   = "#E65100"
 BG        = "#F4F6FA"
 SURFACE   = "#FFFFFF"
 BORDER    = "#E0E0E0"
@@ -29,46 +31,21 @@ TEXT      = "#212121"
 TEXT_MUTED= "#757575"
 
 # ── Estilos de botones ────────────────────────────────────────────────────────
+# Por requerimiento de diseño, TODOS los botones comparten un mismo estilo, sin
+# importar su función: fondo azul (color primario) cuando están activos y gris
+# cuando están deshabilitados; el texto y el emoji van en blanco.
+# Los alias BTN_DANGER/BTN_SUCCESS/BTN_WARNING/BTN_SECONDARY se conservan para no
+# alterar las importaciones existentes (y por si se quisiera re-diferenciar).
 BTN_PRIMARY = f"""
 QPushButton {{
     background-color:{PRIMARY}; color:white; border:none;
-    padding:6px 18px; border-radius:4px; font-weight:600;
+    padding:6px 18px; border-radius:4px; font-weight:normal;
 }}
-QPushButton:hover  {{ background-color:{PRIMARY_L}; }}
-QPushButton:pressed{{ background-color:{PRIMARY_D}; }}
-QPushButton:disabled{{ background-color:#BDBDBD; color:#9E9E9E; }}
+QPushButton:hover    {{ background-color:{PRIMARY_L}; }}
+QPushButton:pressed  {{ background-color:{PRIMARY_D}; }}
+QPushButton:disabled {{ background-color:#BDBDBD; color:#9E9E9E; }}
 """
-BTN_DANGER = f"""
-QPushButton {{
-    background-color:{DANGER}; color:white; border:none;
-    padding:6px 18px; border-radius:4px; font-weight:600;
-}}
-QPushButton:hover  {{ background-color:#E53935; }}
-QPushButton:disabled{{ background-color:#BDBDBD; color:#9E9E9E; }}
-"""
-BTN_SUCCESS = f"""
-QPushButton {{
-    background-color:{SUCCESS}; color:white; border:none;
-    padding:6px 18px; border-radius:4px; font-weight:600;
-}}
-QPushButton:hover  {{ background-color:#43A047; }}
-QPushButton:disabled{{ background-color:#BDBDBD; color:#9E9E9E; }}
-"""
-BTN_WARNING = f"""
-QPushButton {{
-    background-color:{WARNING}; color:white; border:none;
-    padding:6px 18px; border-radius:4px; font-weight:600;
-}}
-QPushButton:hover  {{ background-color:#EF6C00; }}
-QPushButton:disabled{{ background-color:#BDBDBD; color:#9E9E9E; }}
-"""
-BTN_SECONDARY = f"""
-QPushButton {{
-    background-color:#ECEFF1; color:{TEXT}; border:1px solid {BORDER};
-    padding:6px 18px; border-radius:4px; font-weight:500;
-}}
-QPushButton:hover  {{ background-color:#CFD8DC; }}
-"""
+BTN_DANGER = BTN_SUCCESS = BTN_WARNING = BTN_SECONDARY = BTN_PRIMARY
 
 STYLE_TABLE = f"""
 QTableWidget {{
@@ -80,7 +57,7 @@ QTableWidget {{
 QTableWidget::item {{ padding:4px 8px; }}
 QHeaderView::section {{
     background-color:{PRIMARY}; color:white;
-    padding:7px 8px; border:none; font-weight:700; font-size:12px;
+    padding:7px 8px; border:none; font-weight:normal; font-size:12px;
 }}
 QScrollBar:vertical {{
     border:none; background:{BG}; width:10px; margin:0;
@@ -176,13 +153,41 @@ class SeccionBase(QWidget):
     Pueden agregar botones extra con _botones_extra().
     """
 
-    def __init__(self, titulo: str, parent=None):
+    def __init__(self, titulo: str, parent=None, seccion_idx=None):
         super().__init__(parent)
         self.setObjectName("seccion")
         self.setStyleSheet(f"QWidget#seccion {{ background:{BG}; }}")
         self._titulo = titulo
+        self.seccion_idx = seccion_idx
         self._setup_base()
         self.actualizar()
+
+    # ── sesión / permisos (fachada para subclases) ──────────────────────────
+    def _rol(self):
+        return Sesion().rol
+
+    def _ref_id(self):
+        return Sesion().ref_id
+
+    def _es_admin(self) -> bool:
+        return Sesion().rol == RolUsuario.ADMINISTRADOR
+
+    def _es(self, rol) -> bool:
+        return Sesion().rol == rol
+
+    def _es_solo_lectura(self) -> bool:
+        return (self.seccion_idx is not None
+                and permisos.es_solo_lectura(Sesion().rol, self.seccion_idx))
+
+    def _puede(self, capacidad) -> bool:
+        return permisos.puede(Sesion().rol, capacidad)
+
+    def _filtrar(self, items) -> list:
+        """Aplica el scope de datos por rol/sección (los subclases lo usan en _cargar_filas)."""
+        if self.seccion_idx is None:
+            return list(items)
+        return permisos.filtrar(Sesion().rol, self.seccion_idx, items,
+                                Sesion().ref_id, Repositorio())
 
     def _setup_base(self):
         layout = QVBoxLayout(self)
@@ -191,7 +196,7 @@ class SeccionBase(QWidget):
 
         # Cabecera
         hdr = QLabel(self._titulo)
-        hdr.setFont(QFont("Segoe UI", 17, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 17))
         hdr.setStyleSheet(f"color:{PRIMARY};")
         layout.addWidget(hdr)
 
@@ -222,6 +227,11 @@ class SeccionBase(QWidget):
             b.setStyleSheet(style)
             b.setFixedHeight(34)
             btn_bar.addWidget(b)
+
+        # Secciones de solo lectura (p. ej. Ofertas para Estudiante): sin acciones CRUD
+        if self._es_solo_lectura():
+            for b in [self.btn_agregar, self.btn_editar, self.btn_eliminar]:
+                b.setVisible(False)
 
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
@@ -260,6 +270,10 @@ class SeccionBase(QWidget):
         if id_: self._on_eliminar(id_)
 
     def _actualizar_botones(self):
+        if self._es_solo_lectura():
+            self.btn_editar.setEnabled(False)
+            self.btn_eliminar.setEnabled(False)
+            return
         tiene = self._tabla.id_sel() is not None
         self.btn_editar.setEnabled(tiene)
         self.btn_eliminar.setEnabled(tiene)
@@ -284,7 +298,7 @@ class DialogoBase(QDialog):
         self._layout.setSpacing(12)
 
         hdr = QLabel(titulo)
-        hdr.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 13))
         hdr.setStyleSheet(f"color:{PRIMARY};")
         self._layout.addWidget(hdr)
 
@@ -320,8 +334,9 @@ class DialogoBase(QDialog):
         self.accept()
 
     def _agregar_campo(self, label: str, widget: QWidget, required=False):
-        lbl_text = f"<b>{label}</b>:" if required else f"{label}:"
-        self._form.addRow(QLabel(lbl_text), widget)
+        if required and "*" not in label:
+            label = f"{label} *"        # marca de obligatorio (sin negrita)
+        self._form.addRow(QLabel(f"{label}:"), widget)
 
     def _campo_texto(self, placeholder="") -> QLineEdit:
         w = QLineEdit()

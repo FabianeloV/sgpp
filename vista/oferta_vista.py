@@ -5,6 +5,8 @@ Vista de gestión de Ofertas de Prácticas.
 
 from PyQt6.QtWidgets import QPushButton
 from modelo.entidades import EstadoOferta
+from modelo import permisos
+from modelo.rol_usuario import RolUsuario
 from .widgets import (
     SeccionBase, DialogoBase, BTN_WARNING, BTN_SUCCESS,
     confirmar_eliminacion, msg_error, msg_ok, msg_warn
@@ -12,10 +14,12 @@ from .widgets import (
 
 
 class DialogoOferta(DialogoBase):
-    def __init__(self, empresas: list, oferta=None, parent=None):
+    def __init__(self, empresas: list, oferta=None, parent=None, id_empresa_fijo=None):
         titulo = "Nueva Oferta de Práctica" if not oferta else "Editar Oferta"
         super().__init__(titulo, parent)
         self.setMinimumWidth(520)
+
+        self._id_empresa_fijo = id_empresa_fijo
 
         self.cmb_empresa = self._campo_combo(
             [(e.nombre, e.id_empresa) for e in empresas]
@@ -37,9 +41,16 @@ class DialogoOferta(DialogoBase):
             idx2 = self.cmb_estado.findText(oferta.estado)
             if idx2 >= 0: self.cmb_estado.setCurrentIndex(idx2)
 
+        if id_empresa_fijo is not None:
+            idx = self.cmb_empresa.findData(id_empresa_fijo)
+            if idx >= 0: self.cmb_empresa.setCurrentIndex(idx)
+            self.cmb_empresa.setEnabled(False)
+
     def datos(self):
+        id_empresa = (self._id_empresa_fijo if self._id_empresa_fijo is not None
+                      else self.cmb_empresa.currentData())
         return (
-            self.cmb_empresa.currentData(),
+            id_empresa,
             self.txt_desc.toPlainText(),
             self.txt_req.toPlainText(),
             self.cmb_estado.currentText(),
@@ -50,7 +61,7 @@ class OfertaVista(SeccionBase):
     def __init__(self, ctrl_oferta, ctrl_empresa, parent=None):
         self.ctrl  = ctrl_oferta
         self.ctrlE = ctrl_empresa
-        super().__init__("📋  Ofertas de Práctica", parent)
+        super().__init__("📋  Ofertas de Práctica", parent, seccion_idx=permisos.OFERTAS)
 
     def _headers(self):
         return ["ID", "Empresa", "Descripción", "Estado", "Postulaciones"]
@@ -60,6 +71,9 @@ class OfertaVista(SeccionBase):
         self.btn_activar = QPushButton("✅  Activar")
         self.btn_cerrar.setEnabled(False)
         self.btn_activar.setEnabled(False)
+        if self._es_solo_lectura():
+            self.btn_cerrar.setVisible(False)
+            self.btn_activar.setVisible(False)
         return [(self.btn_cerrar, BTN_WARNING), (self.btn_activar, BTN_SUCCESS)]
 
     def _setup_base(self):
@@ -78,7 +92,7 @@ class OfertaVista(SeccionBase):
         from modelo.repositorio import Repositorio
         repo = Repositorio()
         filas = []
-        for o in self.ctrl.listar():
+        for o in self._filtrar(self.ctrl.listar()):
             emp = self.ctrlE.obtener(o.id_empresa)
             n_posts = len(repo.postulaciones_oferta(o.id_oferta))
             filas.append([
@@ -95,7 +109,8 @@ class OfertaVista(SeccionBase):
         if not empresas:
             msg_warn(self, "Primero registre al menos una empresa.")
             return
-        dlg = DialogoOferta(empresas, parent=self)
+        id_fijo = self._ref_id() if self._es(RolUsuario.EMPRESA) else None
+        dlg = DialogoOferta(empresas, parent=self, id_empresa_fijo=id_fijo)
         if dlg.exec() == DialogoBase.DialogCode.Accepted:
             id_emp, desc, req, estado = dlg.datos()
             ok, msg = self.ctrl.agregar(id_emp, desc, req)
@@ -104,14 +119,33 @@ class OfertaVista(SeccionBase):
 
     def _on_editar(self, id_):
         o = self.ctrl.obtener(id_)
-        dlg = DialogoOferta(self.ctrlE.listar(), oferta=o, parent=self)
+        id_fijo = None
+        if self._es(RolUsuario.EMPRESA):
+            if not o or o.id_empresa != self._ref_id():
+                msg_error(self, "No tiene permiso para editar esta oferta.")
+                return
+            id_fijo = self._ref_id()
+        dlg = DialogoOferta(self.ctrlE.listar(), oferta=o, parent=self,
+                            id_empresa_fijo=id_fijo)
         if dlg.exec() == DialogoBase.DialogCode.Accepted:
             id_emp, desc, req, estado = dlg.datos()
             ok, msg = self.ctrl.actualizar(id_, id_emp, desc, req, estado)
             (msg_ok if ok else msg_error)(self, msg)
             if ok: self.actualizar()
 
+    def _puede_gestionar(self, id_) -> bool:
+        """Defensa en profundidad: Empresa solo actúa sobre ofertas propias."""
+        if not self._es(RolUsuario.EMPRESA):
+            return True
+        o = self.ctrl.obtener(id_)
+        if not o or o.id_empresa != self._ref_id():
+            msg_error(self, "No tiene permiso para gestionar esta oferta.")
+            return False
+        return True
+
     def _on_eliminar(self, id_):
+        if not self._puede_gestionar(id_):
+            return
         if confirmar_eliminacion(self, "esta oferta"):
             ok, msg = self.ctrl.eliminar(id_)
             (msg_ok if ok else msg_error)(self, msg)
@@ -119,14 +153,14 @@ class OfertaVista(SeccionBase):
 
     def _cerrar_sel(self):
         id_ = self._tabla.id_sel()
-        if id_:
+        if id_ and self._puede_gestionar(id_):
             ok, msg = self.ctrl.cambiar_estado(id_, EstadoOferta.CERRADA)
             (msg_ok if ok else msg_error)(self, msg)
             if ok: self.actualizar()
 
     def _activar_sel(self):
         id_ = self._tabla.id_sel()
-        if id_:
+        if id_ and self._puede_gestionar(id_):
             ok, msg = self.ctrl.cambiar_estado(id_, EstadoOferta.ACTIVA)
             (msg_ok if ok else msg_error)(self, msg)
             if ok: self.actualizar()

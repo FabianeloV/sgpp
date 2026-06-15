@@ -27,6 +27,8 @@ from .tipo_solicitud import TipoSolicitud
 from .tutor import Tutor
 from .tutor_academico import TutorAcademico
 from .tutor_empresarial import TutorEmpresarial
+from .rol_usuario import RolUsuario
+from .usuario import Usuario
 
 
 __all__ = [
@@ -53,4 +55,6 @@ __all__ = [
     "Formulario",
     "Documento",
     "SolicitudAutorizacion",
+    "RolUsuario",
+    "Usuario",
 ]

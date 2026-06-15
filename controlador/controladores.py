@@ -16,6 +16,8 @@ from .controlador_practica import ControladorPractica
 from .controlador_solicitud import ControladorSolicitud
 from .controlador_terna import ControladorTerna
 from .controlador_tutor import ControladorTutor
+from .controlador_usuario import ControladorUsuario
+from .controlador_reporte import ControladorReporte
 
 
 R = Repositorio  # alias preservado por compatibilidad
@@ -31,5 +33,7 @@ __all__ = [
     "ControladorTerna",
     "ControladorPractica",
     "ControladorSolicitud",
+    "ControladorUsuario",
+    "ControladorReporte",
     "R",
 ]

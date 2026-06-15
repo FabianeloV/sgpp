@@ -17,6 +17,10 @@ from .widgets import (
     confirmar_eliminacion, msg_error, msg_ok
 )
 
+from modelo import permisos
+from modelo.rol_usuario import RolUsuario
+from modelo.sesion import Sesion
+
 
 # ── Diálogos ──────────────────────────────────────────────────────────────────
 
@@ -68,7 +72,7 @@ class EmpresaVista(SeccionBase):
     def __init__(self, ctrl_empresa, ctrl_convenio, parent=None):
         self.ctrl  = ctrl_empresa
         self.ctrlC = ctrl_convenio
-        super().__init__("🏢  Empresas", parent)
+        super().__init__("🏢  Empresas", parent, seccion_idx=permisos.EMPRESAS)
 
     def _headers(self):
         return ["ID", "Nombre", "RUC", "Convenio Vigente", "Ofertas"]
@@ -89,7 +93,7 @@ class EmpresaVista(SeccionBase):
         from modelo.repositorio import Repositorio
         repo = Repositorio()
         filas = []
-        for e in self.ctrl.listar():
+        for e in self._filtrar(self.ctrl.listar()):
             vigente = "✔ Sí" if self.ctrlC.tiene_vigente(e.id_empresa) else "✗ No"
             nofertas = len(repo.ofertas_empresa(e.id_empresa))
             filas.append([e.id_empresa, e.nombre, e.RUC, vigente, nofertas])
@@ -141,8 +145,8 @@ class _DialogoConveniosSub(QDialog):
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(10)
 
-        lbl = QLabel(f"Convenios de <b>{empresa.nombre}</b>")
-        lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl = QLabel(f"Convenios de {empresa.nombre}")
+        lbl.setFont(QFont("Segoe UI", 12))
         lay.addWidget(lbl)
 
         bar = QHBoxLayout()

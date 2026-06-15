@@ -13,11 +13,13 @@ from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QFont, QIcon
 
 from modelo.repositorio import Repositorio
+from modelo.sesion import Sesion
+from modelo import permisos
 from controlador.controladores import (
     ControladorEmpresa, ControladorConvenio, ControladorOferta,
     ControladorTutor, ControladorCoordinador, ControladorEstudiante,
     ControladorPostulacion, ControladorTerna, ControladorPractica,
-    ControladorSolicitud,
+    ControladorSolicitud, ControladorUsuario, ControladorReporte,
 )
 from vista.dashboard_vista    import DashboardVista
 from vista.empresa_vista      import EmpresaVista
@@ -27,6 +29,8 @@ from vista.postulacion_vista  import PostulacionVista, TernaVista
 from vista.practica_vista     import PracticaVista
 from vista.tutor_vista        import TutorVista, CoordinadorVista
 from vista.solicitud_vista    import SolicitudVista
+from vista.usuario_vista      import UsuarioVista
+from vista.reporte_vista      import ReportesVista
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 SIDEBAR_BG    = "#0D2B55"
@@ -47,7 +51,7 @@ class _NavBtn(QPushButton):
             padding: 0 0 0 22px;
             color: {TEXT_NAV};
             font-size: 13px;
-            font-weight: 500;
+            font-weight:normal;
             border: none;
             background: transparent;
             border-left: 3px solid transparent;
@@ -60,7 +64,7 @@ class _NavBtn(QPushButton):
             background: {SIDEBAR_SEL};
             color: {TEXT_NAV_ACT};
             border-left: 3px solid {SIDEBAR_MARK};
-            font-weight: 700;
+            font-weight:normal;
         }}
     """
 
@@ -78,13 +82,25 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SGPP – Sistema de Gestión de Prácticas Pre-Profesionales")
         self.setMinimumSize(1100, 680)
         self.resize(1280, 760)
+        self.relogin = False   # "Cerrar sesión" lo pone True para reabrir el login
 
         self._init_controllers()
         self._build_ui()
-        self._nav_btns[0].setChecked(True)
-        self._stack.setCurrentIndex(0)
-        self._dashboard.actualizar()
-        self._status("Sistema listo. Universidad de Cuenca – Carrera de Computación")
+
+        # Seleccionar la primera sección VISIBLE para el rol (Estudiante no ve Dashboard).
+        # Si el rol no tiene secciones (rol inválido), no se expone ninguna vista.
+        visibles = permisos.secciones_visibles(Sesion().rol)
+        if visibles and visibles[0] in self._nav_btns:
+            primero = visibles[0]
+            self._nav_btns[primero].setChecked(True)
+            self._stack.setCurrentIndex(primero)
+            vista = self._stack.currentWidget()
+            if hasattr(vista, "actualizar"):
+                vista.actualizar()
+        else:
+            self._stack.setCurrentWidget(self._pagina_vacia)  # rol sin secciones
+        u = Sesion().usuario
+        self._status(f"Sesión iniciada: {u.nombre} ({u.rol})" if u else "Sistema listo.")
 
     # ── controladores ─────────────────────────────────────────────────────────
 
@@ -100,6 +116,8 @@ class MainWindow(QMainWindow):
         self.ctrl_ter = ControladorTerna()
         self.ctrl_prac= ControladorPractica()
         self.ctrl_sol = ControladorSolicitud()
+        self.ctrl_usuario = ControladorUsuario()
+        self.ctrl_reporte = ControladorReporte()
 
     # ── UI principal ──────────────────────────────────────────────────────────
 
@@ -138,7 +156,7 @@ class MainWindow(QMainWindow):
         ico.setStyleSheet("color:white;")
 
         titulo = QLabel("Sistema de Gestión de Prácticas Pre-Profesionales")
-        titulo.setFont(QFont("Segoe UI", 13, QFont.Weight.Bold))
+        titulo.setFont(QFont("Segoe UI", 13))
         titulo.setStyleSheet("color:white;")
 
         subtitulo = QLabel("Universidad de Cuenca – Carrera de Computación")
@@ -146,11 +164,31 @@ class MainWindow(QMainWindow):
         subtitulo.setStyleSheet("color:#90CAF9;")
         subtitulo.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
+        u = Sesion().usuario
+        info = QLabel(f"👤  {u.nombre} · {u.rol}" if u else "")
+        info.setFont(QFont("Segoe UI", 9))
+        info.setStyleSheet("color:white;")
+
+        btn_logout = QPushButton("Cerrar sesión")
+        btn_logout.setFixedHeight(30)
+        btn_logout.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Botón blanco con texto azul: contrasta sobre el header azul.
+        btn_logout.setStyleSheet(
+            "QPushButton { background:#FFFFFF; color:#1B4F8A; border:none;"
+            " padding:5px 14px; border-radius:4px; font-weight:normal; }"
+            "QPushButton:hover { background:#E3F2FD; }"
+        )
+        btn_logout.clicked.connect(self._cerrar_sesion)
+
         lay.addWidget(ico)
         lay.addSpacing(10)
         lay.addWidget(titulo)
         lay.addStretch()
         lay.addWidget(subtitulo)
+        lay.addSpacing(16)
+        lay.addWidget(info)
+        lay.addSpacing(10)
+        lay.addWidget(btn_logout)
         return bar
 
     def _build_sidebar(self) -> QWidget:
@@ -164,7 +202,7 @@ class MainWindow(QMainWindow):
 
         # Logo / cabecera
         logo_area = QLabel("SGPP")
-        logo_area.setFont(QFont("Segoe UI", 16, QFont.Weight.Black))
+        logo_area.setFont(QFont("Segoe UI", 16))
         logo_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         logo_area.setStyleSheet(
             f"color:white; background:{SIDEBAR_BG}; padding:18px 0 8px 0;"
@@ -187,16 +225,21 @@ class MainWindow(QMainWindow):
             ("👨‍🏫  Tutores",            7),
             ("👔  Coordinadores",      8),
             ("📩  Solicitudes",        9),
+            ("👤  Usuarios",          10),
+            ("📊  Reportes",          11),
         ]
 
-        self._nav_btns  = []
+        self._nav_btns  = {}          # idx -> _NavBtn (solo secciones visibles)
         self._btn_group = QButtonGroup(self)
         self._btn_group.setExclusive(True)
 
+        rol = Sesion().rol
         for texto, idx in nav_items:
+            if not permisos.puede_ver(rol, idx):
+                continue
             btn = _NavBtn(texto)
             self._btn_group.addButton(btn, idx)
-            self._nav_btns.append(btn)
+            self._nav_btns[idx] = btn
             lay.addWidget(btn)
             btn.clicked.connect(lambda checked, i=idx: self._navegar(i))
 
@@ -233,15 +276,23 @@ class MainWindow(QMainWindow):
         self._vista_sol  = SolicitudVista(
             self.ctrl_sol, self.ctrl_est, self.ctrl_emp, self.ctrl_coord
         )
+        self._vista_usuario = UsuarioVista(self.ctrl_usuario)
+        self._vista_reporte = ReportesVista(self.ctrl_reporte)
 
         vistas = [
             self._dashboard, self._vista_est, self._vista_emp,
             self._vista_of,  self._vista_post,self._vista_terna,
             self._vista_prac,self._vista_tut, self._vista_coord,
-            self._vista_sol,
+            self._vista_sol, self._vista_usuario, self._vista_reporte,
         ]
         for v in vistas:
             self._stack.addWidget(v)
+
+        # Página por defecto para roles sin secciones (rol inválido): no expone datos.
+        self._pagina_vacia = QLabel("Sin secciones disponibles para este usuario.")
+        self._pagina_vacia.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pagina_vacia.setStyleSheet("color:#757575; font-size:14px;")
+        self._stack.addWidget(self._pagina_vacia)
         return self._stack
 
     # ── navegación ────────────────────────────────────────────────────────────
@@ -249,10 +300,13 @@ class MainWindow(QMainWindow):
     _NOMBRES = [
         "Dashboard", "Estudiantes", "Empresas", "Ofertas de Práctica",
         "Postulaciones", "Ternas", "Prácticas", "Tutores",
-        "Coordinadores", "Solicitudes",
+        "Coordinadores", "Solicitudes", "Usuarios", "Reportes",
     ]
 
     def _navegar(self, idx: int):
+        # Defensa en profundidad: nunca navegar a una sección no permitida para el rol
+        if not permisos.puede_ver(Sesion().rol, idx):
+            return
         self._stack.setCurrentIndex(idx)
         nombre = self._NOMBRES[idx] if idx < len(self._NOMBRES) else ""
         self._status(f"Sección: {nombre}")
@@ -262,6 +316,11 @@ class MainWindow(QMainWindow):
             vista.actualizar()
         if idx == 0:
             self._dashboard.actualizar()
+
+    def _cerrar_sesion(self):
+        """Marca relogin y cierra la ventana; el bucle de arranque reabre el login."""
+        self.relogin = True
+        self.close()
 
     def _status(self, msg: str):
         if hasattr(self, "_status_bar"):

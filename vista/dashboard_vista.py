@@ -43,7 +43,7 @@ class _TarjetaStat(QFrame):
         txt_lay = QVBoxLayout()
         txt_lay.setSpacing(2)
         lbl_val = QLabel(valor)
-        lbl_val.setFont(QFont("Segoe UI", 26, QFont.Weight.Bold))
+        lbl_val.setFont(QFont("Segoe UI", 26))
         lbl_val.setStyleSheet(f"color:{color}; border:none;")
         lbl_tit = QLabel(titulo)
         lbl_tit.setFont(QFont("Segoe UI", 11))
@@ -73,7 +73,7 @@ class _MiniTabla(QTableWidget):
             }}
             QHeaderView::section {{
                 background:#37474F; color:white;
-                padding:5px 6px; border:none; font-weight:700;
+                padding:5px 6px; border:none; font-weight:normal;
             }}
         """)
         self.setMaximumHeight(200)
@@ -109,7 +109,7 @@ class DashboardVista(QWidget):
 
         # Título
         hdr = QLabel("Panel de Control – SGPP")
-        hdr.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
+        hdr.setFont(QFont("Segoe UI", 18))
         hdr.setStyleSheet(f"color:{PRIMARY};")
         main.addWidget(hdr)
 
@@ -160,7 +160,7 @@ class DashboardVista(QWidget):
         lay.setContentsMargins(14, 12, 14, 12)
         lay.setSpacing(8)
         lbl = QLabel(titulo)
-        lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        lbl.setFont(QFont("Segoe UI", 12))
         lbl.setStyleSheet(f"color:{PRIMARY}; border:none;")
         lay.addWidget(lbl)
         tabla = _MiniTabla(headers)

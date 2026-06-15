@@ -1,0 +1,10 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Datos de la aplicación (binario; se regenera con datos demo al arrancar)
+data/sgpp_data.pkl

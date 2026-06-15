@@ -34,19 +34,23 @@ class ControladorTutor:
 
     # Empresarial
     def agregar_empresarial(self, nombre: str, apellido: str, correo: str,
-                             telefono: str, cargo: str) -> Tuple[bool, str]:
+                             telefono: str, cargo: str, id_empresa: str = "") -> Tuple[bool, str]:
         if not nombre.strip(): return False, "Nombre requerido."
         t = TutorEmpresarial(nombre=nombre.strip(), apellido=apellido.strip(),
-                              correo=correo.strip(), telefono=telefono.strip(), cargo=cargo.strip())
+                              correo=correo.strip(), telefono=telefono.strip(),
+                              cargo=cargo.strip(), id_empresa=id_empresa.strip())
         self.repo.agregar_t_empresarial(t)
         return True, f"Tutor empresarial registrado (ID: {t.id_tutor})."
 
     def actualizar_empresarial(self, id_: str, nombre: str, apellido: str,
-                                correo: str, telefono: str, cargo: str) -> Tuple[bool, str]:
+                                correo: str, telefono: str, cargo: str,
+                                id_empresa: str = "") -> Tuple[bool, str]:
         t = self.repo.obtener_t_empresarial(id_)
         if not t: return False, "Tutor no encontrado."
         t.nombre, t.apellido = nombre.strip(), apellido.strip()
         t.correo, t.telefono, t.cargo = correo.strip(), telefono.strip(), cargo.strip()
+        if id_empresa.strip():   # preservar el vínculo si no se especifica uno nuevo
+            t.id_empresa = id_empresa.strip()
         self.repo.actualizar_t_empresarial(t)
         return True, "Tutor empresarial actualizado."
 

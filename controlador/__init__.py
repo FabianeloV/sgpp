@@ -9,6 +9,8 @@ from .controladores import (
     ControladorSolicitud,
     ControladorTerna,
     ControladorTutor,
+    ControladorUsuario,
+    ControladorReporte,
     R,
 )
 
@@ -23,5 +25,7 @@ __all__ = [
     "ControladorTerna",
     "ControladorPractica",
     "ControladorSolicitud",
+    "ControladorUsuario",
+    "ControladorReporte",
     "R",
 ]

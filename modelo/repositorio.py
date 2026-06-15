@@ -13,7 +13,7 @@ from .entidades import (
     Coordinador, Estudiante,
     Postulacion, Terna, Practica,
     Actividad, Formulario, Documento,
-    SolicitudAutorizacion,
+    SolicitudAutorizacion, Usuario,
     EstadoPractica, EstadoPostulacion,
 )
 
@@ -52,6 +52,7 @@ class Repositorio:
         self.formularios:          Dict[str, Formulario]           = {}
         self.documentos:           Dict[str, Documento]            = {}
         self.solicitudes:          Dict[str, SolicitudAutorizacion]= {}
+        self.usuarios:             Dict[str, Usuario]              = {}
 
         self._cargar()
 
@@ -63,6 +64,7 @@ class Repositorio:
         "coordinadores", "estudiantes",
         "postulaciones", "ternas", "practicas",
         "actividades", "formularios", "documentos", "solicitudes",
+        "usuarios",
     ]
 
     def guardar(self):
@@ -143,6 +145,10 @@ class Repositorio:
     def eliminar_t_empresarial(self, id_: str) -> bool:      return self._del(self.tutores_empresariales, id_)
     def obtener_t_empresarial(self, id_: str) -> Optional[TutorEmpresarial]: return self.tutores_empresariales.get(id_)
     def listar_t_empresariales(self) -> List[TutorEmpresarial]: return list(self.tutores_empresariales.values())
+
+    def tutores_empresariales_empresa(self, id_empresa: str) -> List[TutorEmpresarial]:
+        return [t for t in self.tutores_empresariales.values()
+                if getattr(t, "id_empresa", "") == id_empresa]
 
     # ── COORDINADOR ───────────────────────────────────────────────────────────
 
@@ -245,3 +251,21 @@ class Repositorio:
 
     def solicitudes_estudiante(self, id_est: str) -> List[SolicitudAutorizacion]:
         return [s for s in self.solicitudes.values() if s.id_estudiante == id_est]
+
+    # ── USUARIO ───────────────────────────────────────────────────────────────
+
+    def agregar_usuario(self, u: Usuario):          self._set(self.usuarios, u.id_usuario, u)
+    def actualizar_usuario(self, u: Usuario):       self._set(self.usuarios, u.id_usuario, u)
+    def eliminar_usuario(self, id_: str) -> bool:   return self._del(self.usuarios, id_)
+    def obtener_usuario(self, id_: str) -> Optional[Usuario]: return self.usuarios.get(id_)
+    def listar_usuarios(self) -> List[Usuario]:     return list(self.usuarios.values())
+
+    def obtener_usuario_por_nombre(self, nombre: str) -> Optional[Usuario]:
+        for u in self.usuarios.values():
+            if u.nombre == nombre:
+                return u
+        return None
+
+    def autenticar(self, nombre: str, password: str) -> Optional[Usuario]:
+        u = self.obtener_usuario_por_nombre(nombre)
+        return u if (u is not None and u.password == password) else None

@@ -12,6 +12,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont
 
 from modelo.entidades import EstadoPostulacion, EstadoPractica, TipoFormulario
+from modelo import permisos
+from modelo.rol_usuario import RolUsuario
+from modelo.sesion import Sesion
 from .widgets import (
     SeccionBase, DialogoBase, Tabla,
     BTN_PRIMARY, BTN_SECONDARY, BTN_SUCCESS, BTN_WARNING, BTN_DANGER,
@@ -64,7 +67,8 @@ class PracticaVista(SeccionBase):
         self.ctrlEmp = ctrl_emp
         self.ctrlTA  = ctrl_tac
         self.ctrlTE  = ctrl_temp
-        super().__init__("🎓  Prácticas Pre-Profesionales", parent)
+        super().__init__("🎓  Prácticas Pre-Profesionales", parent,
+                         seccion_idx=permisos.PRACTICAS)
 
     def _headers(self):
         return ["ID", "Estudiante", "Empresa", "Fecha Inicio", "Estado", "T. Académico", "T. Empresarial"]
@@ -93,6 +97,8 @@ class PracticaVista(SeccionBase):
         self._tabla.itemSelectionChanged.connect(self._sync_botones)
 
     def _sync_botones(self):
+        # Nueva Práctica se gatea por capacidad CREAR_PRACTICA (independiente de selección).
+        self.btn_nuevo.setEnabled(self._puede(permisos.CREAR_PRACTICA))
         id_ = self._tabla.id_sel()
         if not id_:
             for b in [self.btn_detalle, self.btn_finalizar,
@@ -102,14 +108,17 @@ class PracticaVista(SeccionBase):
         p = self.ctrl.obtener(id_)
         if not p: return
         self.btn_detalle.setEnabled(True)
-        self.btn_finalizar.setEnabled(p.estado == EstadoPractica.ACTIVA)
-        self.btn_aprobar.setEnabled(p.estado == EstadoPractica.FINALIZADA)
+        # Cada acción combina la habilitación por estado con la capacidad del rol.
+        self.btn_finalizar.setEnabled(
+            p.estado == EstadoPractica.ACTIVA and self._puede(permisos.FINALIZAR_PRACTICA))
+        self.btn_aprobar.setEnabled(
+            p.estado == EstadoPractica.FINALIZADA and self._puede(permisos.APROBAR_PRACTICA))
         self.btn_editar.setEnabled(False)
         self.btn_eliminar.setEnabled(True)
 
     def _cargar_filas(self):
         filas = []
-        for p in self.ctrl.listar():
+        for p in self._filtrar(self.ctrl.listar()):
             post = self.ctrlP.obtener(p.id_postulacion)
             est  = self.ctrlE.obtener(post.id_estudiante) if post else None
             of   = self.ctrlO.obtener(post.id_oferta) if post else None
@@ -144,6 +153,7 @@ class PracticaVista(SeccionBase):
                 for c in range(self._tabla.columnCount()):
                     i = self._tabla.item(row, c)
                     if i: i.setBackground(b)
+        self._sync_botones()
 
     def _on_agregar(self): self._crear_practica()
     def _on_editar(self, id_): pass
@@ -155,6 +165,8 @@ class PracticaVista(SeccionBase):
             if ok: self.actualizar()
 
     def _crear_practica(self):
+        if not self._puede(permisos.CREAR_PRACTICA):
+            return
         # Recopilar postulaciones aceptadas sin práctica
         from modelo.repositorio import Repositorio
         repo = Repositorio()
@@ -190,7 +202,7 @@ class PracticaVista(SeccionBase):
 
     def _finalizar_sel(self):
         id_ = self._tabla.id_sel()
-        if not id_: return
+        if not id_ or not self._puede(permisos.FINALIZAR_PRACTICA): return
         dlg = _DialogoFinalizar(parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             ok, msg = self.ctrl.finalizar(id_, *dlg.datos())
@@ -199,7 +211,7 @@ class PracticaVista(SeccionBase):
 
     def _aprobar_sel(self):
         id_ = self._tabla.id_sel()
-        if not id_: return
+        if not id_ or not self._puede(permisos.APROBAR_PRACTICA): return
         ok, msg = self.ctrl.aprobar(id_)
         (msg_ok if ok else msg_error)(self, msg)
         if ok: self.actualizar()
@@ -261,13 +273,13 @@ class _DialogoDetallePractica(QDialog):
         te   = self.ctrlTE.obtener_empresarial(practica.id_t_empresarial)
 
         info = (
-            f"<b>Estudiante:</b> {est.nombre_completo if est else '?'} &nbsp;|&nbsp; "
-            f"<b>Empresa:</b> {emp.nombre if emp else '?'} &nbsp;|&nbsp; "
-            f"<b>Estado:</b> {practica.estado}<br>"
-            f"<b>Inicio:</b> {practica.fecha_inicio} &nbsp; "
-            f"<b>Fin:</b> {practica.fecha_fin or '—'} &nbsp;|&nbsp; "
-            f"<b>T. Acad.:</b> {ta.nombre_completo if ta else '?'} &nbsp; "
-            f"<b>T. Emp.:</b> {te.nombre_completo if te else '?'}"
+            f"Estudiante: {est.nombre_completo if est else '?'} &nbsp;|&nbsp; "
+            f"Empresa: {emp.nombre if emp else '?'} &nbsp;|&nbsp; "
+            f"Estado: {practica.estado}<br>"
+            f"Inicio: {practica.fecha_inicio} &nbsp; "
+            f"Fin: {practica.fecha_fin or '—'} &nbsp;|&nbsp; "
+            f"T. Acad.: {ta.nombre_completo if ta else '?'} &nbsp; "
+            f"T. Emp.: {te.nombre_completo if te else '?'}"
         )
         lbl = QLabel(info)
         lbl.setWordWrap(True)
@@ -315,8 +327,10 @@ class _DialogoDetallePractica(QDialog):
         self.btn_act_add.clicked.connect(self._agregar_actividad)
         self.btn_act_val.clicked.connect(self._validar_actividad)
         self.btn_act_del.clicked.connect(self._eliminar_actividad)
+        # Defensa en profundidad: validar actividad se gatea por capacidad VALIDAR_ACTIVIDAD.
+        _puede_val = permisos.puede(Sesion().rol, permisos.VALIDAR_ACTIVIDAD)
         self.tab_act.itemSelectionChanged.connect(
-            lambda: (self.btn_act_val.setEnabled(self.tab_act.id_sel() is not None),
+            lambda: (self.btn_act_val.setEnabled(self.tab_act.id_sel() is not None and _puede_val),
                      self.btn_act_del.setEnabled(self.tab_act.id_sel() is not None))
         )
         self._cargar_actividades()
@@ -398,12 +412,15 @@ class _DialogoDetallePractica(QDialog):
         self.tab_form = Tabla(["ID", "Tipo", "Fecha", "Firmado", "Observaciones"])
         lay.addWidget(self.tab_form)
 
+        # Defensa en profundidad: gestión de formularios se gatea por GESTIONAR_FORMULARIO.
+        _puede_form = permisos.puede(Sesion().rol, permisos.GESTIONAR_FORMULARIO)
+        self.btn_form_add.setEnabled(_puede_form)
         self.btn_form_add.clicked.connect(self._agregar_formulario)
         self.btn_form_edit.clicked.connect(self._editar_formulario)
         self.btn_form_del.clicked.connect(self._eliminar_formulario)
         self.tab_form.itemSelectionChanged.connect(
-            lambda: (self.btn_form_edit.setEnabled(self.tab_form.id_sel() is not None),
-                     self.btn_form_del.setEnabled(self.tab_form.id_sel() is not None))
+            lambda: (self.btn_form_edit.setEnabled(self.tab_form.id_sel() is not None and _puede_form),
+                     self.btn_form_del.setEnabled(self.tab_form.id_sel() is not None and _puede_form))
         )
         self._cargar_formularios()
         return w
@@ -475,7 +492,7 @@ class _DlgSelTutor(QDialog):
         self.id_sel = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 16, 16, 12)
-        lay.addWidget(QLabel(f"<b>Seleccione el {titulo}:</b>"))
+        lay.addWidget(QLabel(f"Seleccione el {titulo}:"))
         self.lista = QListWidget()
         for t in tutores:
             item = QListWidgetItem(t.nombre_completo)
